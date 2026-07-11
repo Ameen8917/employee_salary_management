@@ -118,7 +118,7 @@ These features are intentionally excluded to prioritize core salary management f
 
 ### Frontend
 
-- Next.js
+- React.js
 - TypeScript
 - Tailwind CSS
 - shadcn/ui

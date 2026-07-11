@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color: #17332a; background: #f5f7f5; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #f5f7f5; }
+.ant-layout { background: transparent !important; }
+.ant-table-wrapper .ant-table { background: transparent; }
+.soft-card { box-shadow: 0 12px 32px rgba(23, 51, 42, 0.06); }
+.salary-bar .ant-progress-inner { background: #edf2ef; }
