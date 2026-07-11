@@ -3,7 +3,8 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 
-import testRoutes from "./routes/test.routes";
+import testRoutes from "./routes/test.routes.js";
+import employeeRoutes from "./routes/employee.routes.js";
 
 const app = express();
 
@@ -13,5 +14,6 @@ app.use(morgan("dev"));
 app.use(express.json());
 
 app.use("/api", testRoutes);
+app.use("/api/employees", employeeRoutes);
 
 export default app;

@@ -4,7 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
+dotenv_1.default.config({ quiet: true });
 const app_js_1 = __importDefault(require("./app.js"));
 const index_js_1 = require("./database/index.js");
 const PORT = process.env.PORT || 5000;

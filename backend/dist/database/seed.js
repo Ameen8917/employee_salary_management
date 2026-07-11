@@ -4,7 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
+dotenv_1.default.config({ quiet: true });
 const database_js_1 = __importDefault(require("../config/database.js"));
 const employee_model_js_1 = __importDefault(require("../models/employee.model.js"));
 const EMPLOYEE_COUNT = 10_000;
