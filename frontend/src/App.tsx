@@ -1,14 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   App as AntApp,
+  Alert,
   Avatar,
   Button,
   Card,
   ConfigProvider,
   Drawer,
-  Dropdown,
   Form,
   Input,
+  InputNumber,
   Layout,
   Menu,
   Progress,
@@ -17,165 +18,663 @@ import {
   Statistic,
   Table,
   Tag,
-  Tooltip,
   Typography,
   type TableProps,
 } from "antd";
 import {
   BarChartOutlined,
-  BellOutlined,
-  DownOutlined,
   GlobalOutlined,
-  MenuOutlined,
   MenuFoldOutlined,
+  MenuOutlined,
   MenuUnfoldOutlined,
   PlusOutlined,
   SearchOutlined,
   TeamOutlined,
-  UserOutlined,
   WalletOutlined,
 } from "@ant-design/icons";
-import { countryStats, departmentStats, employees as initialEmployees } from "./data/mockData";
+import {
+  api,
+  type DashboardSummary,
+  type DepartmentSalary,
+  type SalaryDistribution,
+} from "./api/client";
 import type { Employee } from "./types";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
-
-const statusColors: Record<Employee["employmentStatus"], string> = {
-  active: "green", inactive: "default", on_leave: "gold", terminated: "red",
+const DEPARTMENTS = [
+  "Engineering",
+  "Product",
+  "Finance",
+  "Human Resources",
+  "Sales",
+  "Marketing",
+  "Operations",
+  "Legal",
+];
+const COUNTRIES = [
+  "India",
+  "United States",
+  "Canada",
+  "Germany",
+  "United Kingdom",
+];
+const STATUSES: Employee["employmentStatus"][] = [
+  "active",
+  "inactive",
+  "on_leave",
+  "terminated",
+];
+const colors: Record<Employee["employmentStatus"], string> = {
+  active: "green",
+  inactive: "default",
+  on_leave: "gold",
+  terminated: "red",
+};
+const money = (amount: number, currency = "INR") =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0,
+  }).format(amount);
+type FormValues = {
+  employeeNumber: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  department: string;
+  country: string;
+  currency: string;
+  salary: number;
+  hireDate: string;
 };
 
-const formatCurrency = (value: number, currency = "INR") => new Intl.NumberFormat("en-IN", {
-  style: "currency", currency, maximumFractionDigits: 0,
-}).format(value);
-
-function StatCard({ title, value, prefix, helper, accent }: { title: string; value: string | number; prefix?: React.ReactNode; helper: string; accent: string }) {
-  return (
-    <Card className="soft-card border-0" styles={{ body: { padding: 20 } }}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <Text className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{title}</Text>
-          <Statistic value={value} prefix={prefix} valueStyle={{ fontSize: 26, color: "#17332a", fontWeight: 700, marginTop: 7 }} />
-          <Text className="text-xs text-slate-500">{helper}</Text>
-        </div>
-        <span className={`grid h-11 w-11 place-items-center rounded-2xl ${accent}`}>{prefix}</span>
-      </div>
-    </Card>
-  );
-}
-
 function App() {
+  const [path, setPath] = useState(() => window.location.pathname);
   const [collapsed, setCollapsed] = useState(false);
-  const [mobileMenu, setMobileMenu] = useState(false);
-  const [activeSection, setActiveSection] = useState("overview");
-  const [employeeRows, setEmployeeRows] = useState(initialEmployees);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [department, setDepartment] = useState<string | undefined>();
-  const [country, setCountry] = useState<string | undefined>();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [form] = Form.useForm<Employee>();
+  const [department, setDepartment] = useState<string>();
+  const [country, setCountry] = useState<string>();
+  const [status, setStatus] = useState<Employee["employmentStatus"]>();
+  const [salaryMin, setSalaryMin] = useState<number | null>(null);
+  const [salaryMax, setSalaryMax] = useState<number | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary>();
+  const [departmentSalary, setDepartmentSalary] = useState<DepartmentSalary[]>(
+    [],
+  );
+  const [distribution, setDistribution] = useState<SalaryDistribution[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [employeeLoading, setEmployeeLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [form] = Form.useForm<FormValues>();
   const { message } = AntApp.useApp();
+  const employeePage = path === "/employees";
+  const navigate = (next: string) => {
+    window.history.pushState({}, "", next);
+    setPath(next);
+    setMobileOpen(false);
+  };
+  const resetPage = () => setPage(1);
 
-  const filteredEmployees = useMemo(() => employeeRows.filter((employee) => {
-    const text = `${employee.firstName} ${employee.lastName} ${employee.email} ${employee.employeeNumber}`.toLowerCase();
-    return (!search || text.includes(search.toLowerCase()))
-      && (!department || employee.department === department)
-      && (!country || employee.country === country);
-  }), [employeeRows, search, department, country]);
+  useEffect(() => {
+    const onPopState = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+  useEffect(() => {
+    void (async () => {
+      try {
+        setLoading(true);
+        const [a, b, c] = await Promise.all([
+          api.getDashboardSummary(),
+          api.getSalaryByDepartment(),
+          api.getSalaryDistribution(),
+        ]);
+        setSummary(a);
+        setDepartmentSalary(b);
+        setDistribution(c);
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Unable to load dashboard data.",
+        );
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [refresh]);
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () =>
+        void (async () => {
+          try {
+            setEmployeeLoading(true);
+            const result = await api.getEmployees({
+              page,
+              limit: employeePage ? 10 : 5,
+              search,
+              department: employeePage ? department : undefined,
+              country: employeePage ? country : undefined,
+              employmentStatus: employeePage ? status : undefined,
+              salaryMin: employeePage ? (salaryMin ?? undefined) : undefined,
+              salaryMax: employeePage ? (salaryMax ?? undefined) : undefined,
+            });
+            setEmployees(result.employees);
+            setTotal(result.pagination.total);
+          } catch (e) {
+            setError(
+              e instanceof Error ? e.message : "Unable to load employees.",
+            );
+          } finally {
+            setEmployeeLoading(false);
+          }
+        })(),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [
+    page,
+    search,
+    department,
+    country,
+    status,
+    salaryMin,
+    salaryMax,
+    employeePage,
+    refresh,
+  ]);
 
   const columns: TableProps<Employee>["columns"] = [
     {
-      title: "Employee", dataIndex: "firstName", sorter: (a, b) => a.firstName.localeCompare(b.firstName),
-      render: (_, employee) => <Space size={10}><Avatar className="bg-emerald-100 text-emerald-800">{employee.firstName[0]}{employee.lastName[0]}</Avatar><span><b className="block text-slate-800">{employee.firstName} {employee.lastName}</b><Text className="text-xs text-slate-500">{employee.employeeNumber}</Text></span></Space>,
+      title: "Employee",
+      render: (_, row) => (
+        <Space>
+          <Avatar className="bg-emerald-100 text-emerald-800">
+            {row.firstName[0]}
+            {row.lastName[0]}
+          </Avatar>
+          <span>
+            <b className="block">
+              {row.firstName} {row.lastName}
+            </b>
+            <Text className="text-xs text-slate-500">{row.employeeNumber}</Text>
+          </span>
+        </Space>
+      ),
     },
     { title: "Department", dataIndex: "department", responsive: ["md"] },
     { title: "Country", dataIndex: "country", responsive: ["lg"] },
-    { title: "Salary", dataIndex: "salary", sorter: (a, b) => a.salary - b.salary, align: "right", render: (salary, employee) => <b>{formatCurrency(salary, employee.currency)}</b> },
-    { title: "Status", dataIndex: "employmentStatus", render: (status: Employee["employmentStatus"]) => <Tag color={statusColors[status]} className="m-0 capitalize">{status.replace("_", " ")}</Tag> },
+    {
+      title: "Salary",
+      align: "right",
+      render: (_, row) => <b>{money(row.salary, row.currency)}</b>,
+    },
+    {
+      title: "Status",
+      dataIndex: "employmentStatus",
+      render: (value: Employee["employmentStatus"]) => (
+        <Tag color={colors[value]} className="capitalize">
+          {value.replace("_", " ")}
+        </Tag>
+      ),
+    },
   ];
-
-  const addEmployee = (values: Employee) => {
-    setEmployeeRows((rows) => [{ ...values, id: Date.now(), employeeNumber: `EMP${String(rows.length + 1000).padStart(6, "0")}`, employmentStatus: "active", currency: "INR" }, ...rows]);
-    form.resetFields();
-    setDrawerOpen(false);
-    message.success("Employee added to the local preview");
+  const submitEmployee = async (values: FormValues) => {
+    try {
+      await api.createEmployee({
+        ...values,
+        salary: String(values.salary),
+        employmentStatus: "active",
+      });
+      setFormOpen(false);
+      form.resetFields();
+      setRefresh((value) => value + 1);
+      message.success("Employee created successfully");
+    } catch (e) {
+      message.error(
+        e instanceof Error ? e.message : "Unable to create employee.",
+      );
+    }
   };
-
-  const navItems = [
-    { key: "overview", icon: <BarChartOutlined />, label: "Overview" },
-    { key: "employees", icon: <TeamOutlined />, label: "Employees" },
-    { key: "analytics", icon: <WalletOutlined />, label: "Salary analytics" },
-  ];
-
-  const sidebar = <>
-    <div className="flex h-16 items-center gap-3 px-5 text-white"><span className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-400 font-black text-emerald-950">C</span>{!collapsed && <b className="text-lg tracking-tight">Compense</b>}</div>
-    <div className="px-3 pt-6"><Text className="px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-200/70">Workspace</Text></div>
-    <Menu theme="dark" mode="inline" selectedKeys={[activeSection]} items={navItems} className="mt-2 border-0 bg-transparent" onClick={({ key }) => { setActiveSection(key); setMobileMenu(false); }} />
-    {!collapsed && <div className="mx-4 mt-auto mb-5 rounded-2xl bg-emerald-800/70 p-4 text-emerald-50"><Text className="block text-xs font-semibold text-emerald-50">Salary insights</Text><Text className="mt-1 block text-xs leading-5 text-emerald-100/70">A clear view of your team’s compensation.</Text></div>}
-  </>;
+  const maxDepartment = Math.max(
+    ...departmentSalary.map((item) => item.averageSalary),
+    1,
+  );
+  const maxDistribution = Math.max(
+    ...distribution.map((item) => item.employeeCount),
+    1,
+  );
+  const nav = (
+    <>
+      <div className="flex h-16 items-center gap-3 px-5 text-white">
+        <span className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-400 font-black text-emerald-950">
+          C
+        </span>
+        {!collapsed && <b className="text-lg">Compense</b>}
+      </div>
+      <Menu
+        theme="dark"
+        mode="inline"
+        selectedKeys={[employeePage ? "employees" : "overview"]}
+        className="mt-6 border-0 bg-transparent"
+        onClick={({ key }) =>
+          navigate(key === "employees" ? "/employees" : "/")
+        }
+        items={[
+          { key: "overview", icon: <BarChartOutlined />, label: "Overview" },
+          { key: "employees", icon: <TeamOutlined />, label: "Employees" },
+          {
+            key: "analytics",
+            icon: <WalletOutlined />,
+            label: "Salary analytics",
+          },
+        ]}
+      />
+    </>
+  );
+  const employeeTable = (
+    <Table
+      rowKey="id"
+      columns={columns}
+      dataSource={employees}
+      loading={employeeLoading}
+      scroll={{ x: 680 }}
+      pagination={{
+        current: page,
+        pageSize: employeePage ? 10 : 5,
+        total,
+        showSizeChanger: false,
+        onChange: setPage,
+      }}
+    />
+  );
 
   return (
     <Layout className="min-h-screen">
-      <Sider trigger={null} breakpoint="lg" collapsed={collapsed} onCollapse={setCollapsed} className="relative hidden !bg-[#12372a] lg:block">
-        {sidebar}
+      <Sider
+        trigger={null}
+        collapsed={collapsed}
+        breakpoint="lg"
+        onCollapse={setCollapsed}
+        className="relative hidden !bg-[#12372a] lg:block"
+      >
+        {nav}
         <button
           type="button"
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          onClick={() => setCollapsed((value) => !value)}
-          className="absolute bottom-4 left-1/2 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-xl border border-emerald-700 bg-emerald-800 text-emerald-100 transition hover:bg-emerald-700 hover:text-white"
+          onClick={() => setCollapsed(!collapsed)}
+          className="absolute bottom-4 left-1/2 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-xl border border-emerald-700 bg-emerald-800 text-emerald-100"
         >
           {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
         </button>
       </Sider>
-      <Drawer placement="left" open={mobileMenu} onClose={() => setMobileMenu(false)} closable={false} width={250} styles={{ body: { padding: 0, display: "flex", flexDirection: "column", background: "#12372a" } }}>{sidebar}</Drawer>
+      <Drawer
+        placement="left"
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        closable={false}
+        styles={{ body: { padding: 0, background: "#12372a" } }}
+      >
+        {nav}
+      </Drawer>
       <Layout>
-        <Header className="flex h-16 items-center justify-between border-b border-slate-200 bg-[#f5f7f5] px-4 sm:px-8">
-          <div className="flex items-center gap-3"><Button className="lg:hidden" type="text" icon={<MenuOutlined />} onClick={() => setMobileMenu(true)} /><div><Text className="text-xs text-slate-500">Wednesday, 11 July</Text><Title level={4} className="!m-0 !text-[#17332a]">Good morning, Olivia</Title></div></div>
-          <Space size="middle"><Tooltip title="Notifications"><Button type="text" icon={<BellOutlined />} /></Tooltip><Dropdown menu={{ items: [{ key: "profile", label: "HR Manager" }, { key: "settings", label: "Settings" }] }}><Button type="text"><Space><Avatar size="small" className="bg-emerald-700">OM</Avatar><span className="hidden sm:inline">Olivia Martin</span><DownOutlined className="text-xs" /></Space></Button></Dropdown></Space>
+        <Header className="flex items-center border-b border-slate-200 bg-[#f5f7f5] px-4 sm:px-8">
+          <Button
+            className="mr-3 lg:hidden"
+            type="text"
+            icon={<MenuOutlined />}
+            onClick={() => setMobileOpen(true)}
+          />
+          <div>
+            <Text className="text-xs text-slate-500">
+              Compensation workspace
+            </Text>
+            <Title level={4} className="!m-0">
+              {employeePage ? "Employees" : "Salary dashboard"}
+            </Title>
+          </div>
         </Header>
         <Content className="p-4 sm:p-8">
           <div className="mx-auto max-w-[1440px] space-y-6">
-            <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-              <div><Text className="font-medium text-emerald-700">COMPENSATION OVERVIEW</Text><Title level={2} className="!mb-1 !mt-1 !text-[#17332a]">Salary dashboard</Title><Text className="text-slate-500">Monitor pay trends and employee records in one place.</Text></div>
-              <Button type="primary" size="large" icon={<PlusOutlined />} onClick={() => setDrawerOpen(true)}>Add employee</Button>
-            </section>
-
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <StatCard title="Total employees" value="10,000" prefix={<TeamOutlined />} helper="Across 5 countries" accent="bg-emerald-100 text-emerald-700" />
-              <StatCard title="Average salary" value="₹12.6L" prefix={<WalletOutlined />} helper="Current annual compensation" accent="bg-amber-100 text-amber-700" />
-              <StatCard title="Highest salary" value="₹16.2L" prefix={<BarChartOutlined />} helper="Highest recorded package" accent="bg-blue-100 text-blue-700" />
-              <StatCard title="Countries" value="5" prefix={<GlobalOutlined />} helper="Distributed workforce" accent="bg-violet-100 text-violet-700" />
-            </section>
-
-            <section className="grid gap-6 xl:grid-cols-5">
-              <Card className="soft-card border-0 xl:col-span-3" title={<span className="text-base font-semibold text-[#17332a]">Employees</span>} extra={<Button type="link" onClick={() => setActiveSection("employees")}>View all</Button>}>
-                <div className="mb-4 flex flex-col gap-3 md:flex-row"><Input allowClear prefix={<SearchOutlined className="text-slate-400" />} placeholder="Search name, email or employee ID" value={search} onChange={(event) => setSearch(event.target.value)} /><Select allowClear placeholder="Department" className="md:w-44" value={department} onChange={setDepartment} options={[...new Set(employeeRows.map((employee) => employee.department))].map((value) => ({ value }))} /><Select allowClear placeholder="Country" className="md:w-44" value={country} onChange={setCountry} options={[...new Set(employeeRows.map((employee) => employee.country))].map((value) => ({ value }))} /></div>
-                <Table rowKey="id" columns={columns} dataSource={filteredEmployees} size="middle" scroll={{ x: 680 }} pagination={{ pageSize: 5, showSizeChanger: false, showTotal: (total) => `${total} employees` }} />
-              </Card>
-              <Card className="soft-card border-0 xl:col-span-2" title={<span className="text-base font-semibold text-[#17332a]">Employees by country</span>}>
-                <div className="space-y-5">{countryStats.map((item) => <div key={item.name}><div className="mb-2 flex justify-between text-sm"><b>{item.name}</b><Text>{item.count.toLocaleString()}</Text></div><Progress className="salary-bar" percent={item.share} showInfo={false} strokeColor="#2f8c6c" /></div>)}</div>
-              </Card>
-            </section>
-
-            <section className="grid gap-6 lg:grid-cols-2">
-              <Card className="soft-card border-0" title={<span className="text-base font-semibold text-[#17332a]">Average salary by department</span>} extra={<Text className="text-xs text-slate-500">Annual average</Text>}>
-                <div className="space-y-5">{departmentStats.map((item) => <div key={item.name}><div className="mb-2 flex justify-between"><span className="font-medium">{item.name}</span><b>{formatCurrency(item.average)}</b></div><Progress className="salary-bar" percent={item.share} showInfo={false} strokeColor="#d99830" /></div>)}</div>
-              </Card>
-              <Card className="soft-card border-0" title={<span className="text-base font-semibold text-[#17332a]">Salary distribution</span>}>
-                <div className="grid h-full grid-cols-4 items-end gap-3 pt-3"><div className="flex h-48 flex-col justify-end gap-2"><div className="rounded-t-xl bg-emerald-200" style={{ height: "31%" }} /><Text className="text-center text-xs">&lt; ₹5L</Text></div><div className="flex h-48 flex-col justify-end gap-2"><div className="rounded-t-xl bg-emerald-300" style={{ height: "58%" }} /><Text className="text-center text-xs">₹5–10L</Text></div><div className="flex h-48 flex-col justify-end gap-2"><div className="rounded-t-xl bg-emerald-500" style={{ height: "82%" }} /><Text className="text-center text-xs">₹10–15L</Text></div><div className="flex h-48 flex-col justify-end gap-2"><div className="rounded-t-xl bg-[#12372a]" style={{ height: "47%" }} /><Text className="text-center text-xs">₹15L+</Text></div></div>
-              </Card>
-            </section>
+            {error && (
+              <Alert
+                type="error"
+                showIcon
+                message="API connection issue"
+                description={error}
+                closable
+                onClose={() => setError("")}
+              />
+            )}
+            {employeePage ? (
+              <>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <Text className="font-medium text-emerald-700">
+                      EMPLOYEE MANAGEMENT
+                    </Text>
+                    <Title level={2} className="!mb-0">
+                      All employees
+                    </Title>
+                  </div>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setFormOpen(true)}
+                  >
+                    Add employee
+                  </Button>
+                </div>
+                <Card className="soft-card border-0">
+                  <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <Input
+                      allowClear
+                      prefix={<SearchOutlined />}
+                      placeholder="Search name, email or ID"
+                      value={search}
+                      onChange={(e) => {
+                        setSearch(e.target.value);
+                        resetPage();
+                      }}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Department"
+                      value={department}
+                      onChange={(v) => {
+                        setDepartment(v);
+                        resetPage();
+                      }}
+                      options={DEPARTMENTS.map((value) => ({ value }))}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Country"
+                      value={country}
+                      onChange={(v) => {
+                        setCountry(v);
+                        resetPage();
+                      }}
+                      options={COUNTRIES.map((value) => ({ value }))}
+                    />
+                    <Select
+                      allowClear
+                      placeholder="Employment status"
+                      value={status}
+                      onChange={(v) => {
+                        setStatus(v);
+                        resetPage();
+                      }}
+                      options={STATUSES.map((value) => ({
+                        value,
+                        label: value.replace("_", " "),
+                      }))}
+                    />
+                    <InputNumber
+                      className="!w-full"
+                      min={0}
+                      placeholder="Minimum salary"
+                      value={salaryMin}
+                      onChange={(v) => {
+                        setSalaryMin(v);
+                        resetPage();
+                      }}
+                    />
+                    <InputNumber
+                      className="!w-full"
+                      min={0}
+                      placeholder="Maximum salary"
+                      value={salaryMax}
+                      onChange={(v) => {
+                        setSalaryMax(v);
+                        resetPage();
+                      }}
+                    />
+                  </div>
+                  {employeeTable}
+                </Card>
+              </>
+            ) : (
+              <>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <Text className="font-medium text-emerald-700">
+                      LIVE DATA
+                    </Text>
+                    <Title level={2} className="!mb-0">
+                      Salary dashboard
+                    </Title>
+                  </div>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => setFormOpen(true)}
+                  >
+                    Add employee
+                  </Button>
+                </div>
+                <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <Card>
+                    <Statistic
+                      title="Total employees"
+                      value={summary?.totalEmployees ?? "—"}
+                      prefix={<TeamOutlined />}
+                    />
+                  </Card>
+                  <Card>
+                    <Statistic
+                      title="Average salary"
+                      value={summary ? money(summary.averageSalary) : "—"}
+                      prefix={<WalletOutlined />}
+                    />
+                  </Card>
+                  <Card>
+                    <Statistic
+                      title="Highest salary"
+                      value={summary ? money(summary.highestSalary) : "—"}
+                      prefix={<BarChartOutlined />}
+                    />
+                  </Card>
+                  <Card>
+                    <Statistic
+                      title="Departments"
+                      value={summary?.departments ?? "—"}
+                      prefix={<GlobalOutlined />}
+                    />
+                  </Card>
+                </section>
+                <section className="grid gap-6 xl:grid-cols-5">
+                  <Card
+                    className="soft-card border-0 xl:col-span-3"
+                    title="Employees"
+                    extra={
+                      <Button
+                        type="link"
+                        onClick={() => navigate("/employees")}
+                      >
+                        View all employees
+                      </Button>
+                    }
+                  >
+                    <div className="mb-4">
+                      <Input
+                        allowClear
+                        prefix={<SearchOutlined />}
+                        placeholder="Search name, email or employee ID"
+                        value={search}
+                        onChange={(e) => {
+                          setSearch(e.target.value);
+                          resetPage();
+                        }}
+                      />
+                    </div>
+                    {employeeTable}
+                  </Card>
+                  <Card
+                    className="soft-card border-0 xl:col-span-2"
+                    title="Employees by country"
+                    loading={loading}
+                  >
+                    {summary?.employeesByCountry.map((item) => (
+                      <div key={item.country} className="mb-4">
+                        <div className="flex justify-between">
+                          <b>{item.country}</b>
+                          <Text>{item.count.toLocaleString()}</Text>
+                        </div>
+                        <Progress
+                          percent={Math.round(
+                            (item.count / Math.max(summary.totalEmployees, 1)) *
+                              100,
+                          )}
+                          showInfo={false}
+                          strokeColor="#2f8c6c"
+                        />
+                      </div>
+                    ))}
+                  </Card>
+                </section>
+                <section className="grid gap-6 lg:grid-cols-2">
+                  <Card title="Average salary by department" loading={loading}>
+                    {departmentSalary.map((item) => (
+                      <div key={item.department} className="mb-4">
+                        <div className="flex justify-between">
+                          <span>{item.department}</span>
+                          <b>{money(item.averageSalary)}</b>
+                        </div>
+                        <Progress
+                          percent={Math.round(
+                            (item.averageSalary / maxDepartment) * 100,
+                          )}
+                          showInfo={false}
+                          strokeColor="#d99830"
+                        />
+                      </div>
+                    ))}
+                  </Card>
+                  <Card title="Salary distribution" loading={loading}>
+                    <div className="grid grid-cols-4 items-end gap-3">
+                      {distribution.map((item, index) => (
+                        <div
+                          key={item.range}
+                          className="flex h-48 flex-col justify-end gap-2"
+                        >
+                          <div
+                            className={
+                              [
+                                "bg-emerald-200",
+                                "bg-emerald-300",
+                                "bg-emerald-500",
+                                "bg-[#12372a]",
+                              ][index]
+                            }
+                            style={{
+                              height: `${Math.max(8, (item.employeeCount / maxDistribution) * 100)}%`,
+                            }}
+                          />
+                          <Text className="text-center text-xs">
+                            {item.range}
+                          </Text>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                </section>
+              </>
+            )}
           </div>
         </Content>
       </Layout>
-      <Drawer title="Add employee" open={drawerOpen} onClose={() => setDrawerOpen(false)} width={440} extra={<Button type="primary" onClick={() => form.submit()}>Save employee</Button>}>
-        <Form form={form} layout="vertical" onFinish={addEmployee} initialValues={{ department: "Engineering", country: "India", salary: 800000, hireDate: "2024-01-01" }}>
-          <div className="grid grid-cols-2 gap-x-3"><Form.Item name="firstName" label="First name" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="lastName" label="Last name" rules={[{ required: true }]}><Input /></Form.Item></div>
-          <Form.Item name="email" label="Work email" rules={[{ required: true, type: "email" }]}><Input /></Form.Item>
-          <Form.Item name="department" label="Department" rules={[{ required: true }]}><Select options={["Engineering", "Product", "Finance", "Human Resources", "Sales"].map((value) => ({ value }))} /></Form.Item>
-          <Form.Item name="country" label="Country" rules={[{ required: true }]}><Select options={["India", "United States", "Canada", "Germany", "United Kingdom"].map((value) => ({ value }))} /></Form.Item>
-          <Form.Item name="salary" label="Annual salary" rules={[{ required: true }]}><Input type="number" prefix="₹" /></Form.Item>
-          <Form.Item name="hireDate" label="Hire date" rules={[{ required: true }]}><Input type="date" /></Form.Item>
+      <Drawer
+        title="Add employee"
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        extra={
+          <Button type="primary" onClick={() => form.submit()}>
+            Save employee
+          </Button>
+        }
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={submitEmployee}
+          initialValues={{
+            department: "Engineering",
+            country: "India",
+            currency: "INR",
+            salary: 800000,
+            hireDate: "2024-01-01",
+          }}
+        >
+          <div className="grid grid-cols-2 gap-x-3">
+            <Form.Item
+              name="firstName"
+              label="First name"
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+            <Form.Item
+              name="lastName"
+              label="Last name"
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+          </div>
+          <Form.Item
+            name="employeeNumber"
+            label="Employee number"
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="email"
+            label="Work email"
+            rules={[{ required: true, type: "email" }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="department"
+            label="Department"
+            rules={[{ required: true }]}
+          >
+            <Select options={DEPARTMENTS.map((value) => ({ value }))} />
+          </Form.Item>
+          <Form.Item
+            name="country"
+            label="Country"
+            rules={[{ required: true }]}
+          >
+            <Select options={COUNTRIES.map((value) => ({ value }))} />
+          </Form.Item>
+          <Form.Item
+            name="currency"
+            label="Currency"
+            rules={[{ required: true, len: 3 }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="salary"
+            label="Annual salary"
+            rules={[{ required: true }]}
+          >
+            <InputNumber className="!w-full" min={0} />
+          </Form.Item>
+          <Form.Item
+            name="hireDate"
+            label="Hire date"
+            rules={[{ required: true }]}
+          >
+            <Input type="date" />
+          </Form.Item>
         </Form>
       </Drawer>
     </Layout>
@@ -183,5 +682,11 @@ function App() {
 }
 
 export default function RootApp() {
-  return <ConfigProvider><AntApp><App /></AntApp></ConfigProvider>;
+  return (
+    <ConfigProvider>
+      <AntApp>
+        <App />
+      </AntApp>
+    </ConfigProvider>
+  );
 }

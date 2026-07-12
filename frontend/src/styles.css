@@ -9,3 +9,26 @@ body { margin: 0; min-width: 320px; background: #f5f7f5; }
 .ant-table-wrapper .ant-table { background: transparent; }
 .soft-card { box-shadow: 0 12px 32px rgba(23, 51, 42, 0.06); }
 .salary-bar .ant-progress-inner { background: #edf2ef; }
+
+/* Keep desktop navigation visible while the main content scrolls. */
+@media (min-width: 1024px) {
+  .ant-layout-sider {
+    position: sticky !important;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+}
+
+/* The MVP exposes only Overview and Employees navigation. */
+.ant-layout-sider .ant-menu-item:nth-child(3),
+.ant-drawer .ant-menu-item:nth-child(3) {
+  display: none;
+}
+
+/* Employee list filters: search plus five filters stay on one desktop row. */
+@media (min-width: 1280px) {
+  .ant-card-body > .mb-5.grid {
+    grid-template-columns: minmax(220px, 1.5fr) repeat(5, minmax(0, 1fr));
+  }
+}
